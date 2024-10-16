@@ -6,8 +6,8 @@ import WebSocket from "ws"; // WebSocket polyfill for Node.js
 global.WebSocket = WebSocket;
 
 const jwtToken =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOjQsImV4cCI6MTcyOTAxNTE1MywiaWF0IjoxNzI5MDAwNzUzLCJpZCI6NCwiaXNzIjoicXVlY2tvZXhjaGFuZ2UuY29tIiwicm9sZSI6InVzZXIifQ.c_l5Wsx7WoqcbbYX1Yg-f5kxD4nM0wp2pjToY926DPs"; // JWT token received from your auth service
-const centrifuge = new Centrifuge("ws://localhost:8000/connection/websocket", {
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MjkwNjgxMTIsImlhdCI6MTcyOTA2NDUxMiwic3ViIjoiMSIsInVzZXJuYW1lIjoiam9obiJ9.PoeWKPdRy__qj8TQksC6fp70Y8212BY-p4rBPBgcBmc"; // JWT token received from your auth service
+const centrifuge = new Centrifuge("ws://localhost:8001/connection/websocket", {
   token: jwtToken,
   websocket: WebSocket,
 });
@@ -33,11 +33,11 @@ app.listen(3000, () => {
     console.log("Connected to Centrifugo:", ctx);
 
     // Subscribe to a channel (e.g., "chat_room_1")
-    const subscription = centrifuge.subscribe("chat_room_1");
+    const subscription = centrifuge.newSubscription("chat_room_1");
 
     // Handle messages from the channel
-    subscription.on("publish", (message) => {
-      console.log("New message from chat_room_1:", message);
+    subscription.on("publication", (ctx) => {
+      console.log("New message from chat_room_1:", ctx);
     });
 
     // Handle successful subscription
@@ -45,8 +45,12 @@ app.listen(3000, () => {
       console.log("Subscribed to chat_room_1:", ctx);
     });
 
+    subscription.on("subscribing", (ctx) => {
+      console.log("Subscribing to chat_room_1:", ctx);
+    });
+
     // Handle subscription errors
-    subscription.on("subscribe_error", (ctx) => {
+    subscription.on("error", (ctx) => {
       console.error("Subscription error:", ctx);
     });
 
@@ -54,6 +58,8 @@ app.listen(3000, () => {
     subscription.on("unsubscribed", (ctx) => {
       console.log("Unsubscribed from chat_room_1:", ctx);
     });
+
+    subscription.subscribe();
   });
 
   // Handle connection errors
