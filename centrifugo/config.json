@@ -1,7 +1,7 @@
 {
   "log_level": "debug",
   "log_file": "/var/log/centrifugo.log",
-  "token_hmac_secret_key": "EBAAA09AC7211A30AA6B9B70E5B70CE7FFE1AADB708873C48680921D406CB74BC092E92BF089EC82875945BD559D645F68F033CE8057EEA2235DDD4FF3BBBC73",
+  "token_hmac_secret_key": "secret",
   "api_key": "nWv0pkaxvBHYPKcd7nUB2A==",
   "proxy_subscribe_endpoint": "http://auth_service:9080/subscribe",
   "proxy_subscribe_timeout":  "5s",

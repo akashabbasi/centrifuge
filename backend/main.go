@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -102,7 +103,7 @@ func signin(c echo.Context) error {
 
 	// Fetch user from DB
 	var storedPassword string
-	var userID int64
+	var userID int
 	err := db.QueryRow("SELECT id, password FROM users WHERE username=$1", user.Username).Scan(
 		&userID,
 		&storedPassword)
@@ -117,13 +118,19 @@ func signin(c echo.Context) error {
 	}
 
 	// Create JWT
-	claims := &JwtCustomClaims{
-		Username: user.Username,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   strconv.Itoa(97),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-		},
+	// claims := &JwtCustomClaims{
+	// 	Username: user.Username,
+	// 	RegisteredClaims: jwt.RegisteredClaims{
+	// 		Subject:   strconv.Itoa(userID),
+	// 		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	// 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+	// 	},
+	// }
+	claims := jwt.MapClaims{
+		"sub":      strconv.Itoa(userID),             // Subject (user ID)
+		"exp":      time.Now().Add(time.Hour).Unix(), // Expiration time (1 hour from now)
+		"iat":      time.Now().Unix(),                // Issued at time
+		"username": user.Username,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	t, err := token.SignedString(jwtSecret)
@@ -134,9 +141,26 @@ func signin(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"token": t})
 }
 
+// Define the struct for the request body
+type RequestBody struct {
+	Client  string `json:"client"`
+	Channel string `json:"channel"`
+}
+
 // Subscription proxy for Centrifugo
 func subscriptionProxy(c echo.Context) error {
 	authHeader := c.Request().Header.Get("Authorization")
+	// fmt.Println("Auth Header:: ", c.Request().Body)
+	// Initialize the struct
+	var body RequestBody
+
+	// Bind the request body to the struct
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, "Invalid request")
+	}
+
+	// Print the request body struct
+	fmt.Printf("Received body: %+v\n", body)
 	if authHeader == "" || len(authHeader) < 7 {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Missing or invalid Authorization header")
 	}
@@ -152,14 +176,14 @@ func subscriptionProxy(c echo.Context) error {
 	}
 
 	// Casbin check
-	user := claims.Username
+	// user := claims.Username
 	channel := c.QueryParam("channel")
-	action := c.QueryParam("action")
+	// action := c.QueryParam("action")
 
-	ok, err := enforcer.Enforce(user, channel, action)
-	if err != nil || !ok {
-		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
-	}
+	// ok, err := enforcer.Enforce(user, channel, action)
+	// if err != nil || !ok {
+	// 	return echo.NewHTTPError(http.StatusForbidden, "Access denied")
+	// }
 
 	return c.JSON(http.StatusOK, map[string]interface{}{"result": map[string]interface{}{"channels": []string{channel}}})
 }
