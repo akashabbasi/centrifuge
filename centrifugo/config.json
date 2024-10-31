@@ -27,7 +27,8 @@
         "outbox_table_name": "centrifugo_outbox",
         "num_partitions": 1,
         "partition_select_limit": 100,
-        "partition_poll_interval": "200ms"
+        "partition_poll_interval": "200ms",
+        "partition_notification_channel": "centrifugo_partition_change"
       }
     }
   ],
