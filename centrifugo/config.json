@@ -3,7 +3,45 @@
   "log_file": "/var/log/centrifugo.log",
   "token_hmac_secret_key": "secret",
   "api_key": "nWv0pkaxvBHYPKcd7nUB2A==",
-  "proxy_subscribe_endpoint": "http://auth_service:9080/subscribe",
-  "proxy_subscribe_timeout":  "5s",
-  "proxy_subscribe": true
+  "proxy_subscribe_endpoint": "http://auth_service:9080/centrifugo/subscribe",
+  "proxy_subscribe_timeout": "5s",
+  "proxy_include_connection_meta": true,
+  "proxy_subscribe": true,
+  "proxy_http_headers": [
+    "Origin",
+    "User-Agent",
+    "Cookie",
+    "Authorization",
+    "X-Real-Ip",
+    "X-Forwarded-For",
+    "X-Request-Id"
+  ],
+  "user_subscribe_to_personal": true,
+  "user_personal_channel_namespace": "personal",
+  "consumers": [
+    {
+      "name": "order_book_consumer",
+      "type": "postgresql",
+      "postgresql": {
+        "dsn": "postgresql://auth_user:password@db:5432/auth_service",
+        "outbox_table_name": "centrifugo_outbox",
+        "num_partitions": 1,
+        "partition_select_limit": 100,
+        "partition_poll_interval": "200ms"
+      }
+    }
+  ],
+  "namespaces": [
+    {
+      "name": "markets",
+      "history_size": 100,
+      "history_ttl": "300s",
+      "allow_subscribe_for_anonymous": true,
+      "allow_subscribe_for_client": true
+    },
+    {
+      "name": "personal",
+      "presence": true
+    }
+  ]
 }

@@ -10,149 +10,146 @@ import (
 
 	pgadapter "github.com/casbin/casbin-pg-adapter"
 	"github.com/casbin/casbin/v2"
-	"github.com/golang-jwt/jwt/v4"
-	_ "github.com/jackc/pgx/v4/stdlib"
+	"github.com/dgrijalva/jwt-go"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// User model
+var db *sql.DB
+
+// JWT secret key (replace with your own secret)
+var jwtSecret = []byte("secret")
+
+// Casbin enforcer instance
+var enforcer *casbin.Enforcer
+
+// User struct for login/signup
 type User struct {
 	ID       int    `json:"id"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Role     string `json:"role"`
 }
 
-// JWT secret key
-var jwtSecret = []byte("secret")
-
-// Database connection
-var db *sql.DB
-
-// Casbin Enforcer
-var enforcer *casbin.Enforcer
-
-// JWT claims
-type JwtCustomClaims struct {
-	Username string `json:"username"`
-	jwt.RegisteredClaims
+// SubscriptionRequest represents the Centrifugo subscription proxy request
+type SubscriptionRequest struct {
+	ClientID  string `json:"client"`
+	Channel   string `json:"channel"`
+	Token     string `json:"token"`
+	Transport string `json:"transport"`
+	Protocol  string `json:"protocol"`
+	Encoding  string `json:"encoding"`
+	User      string `json:"user"`
 }
 
-// Initialize the database connection
-func initDB() {
-	var err error
-	dsn := "postgres://auth_user:password@db:5432/auth_service?sslmode=disable"
-	db, err = sql.Open("pgx", dsn)
+// Initialize Casbin enforcer with PostgreSQL adapter
+func InitEnforcer(db *sql.DB) (*casbin.Enforcer, error) {
+	adapter, err := pgadapter.NewAdapter("postgresql://auth_user:password@db:5432/auth_service?sslmode=disable", "auth_service")
 	if err != nil {
-		log.Fatal("Failed to connect to the database:", err)
-	}
-	err = db.Ping()
-	if err != nil {
-		log.Fatal("Failed to ping the database:", err)
-	}
-}
-
-// Initialize Casbin with PostgreSQL adapter
-func initCasbin() {
-	adapter, err := pgadapter.NewAdapter("postgresql://auth_user:password@db:5432/auth_service?sslmode=disable")
-	if err != nil {
-		log.Fatal("Failed to create Casbin adapter:", err)
+		return nil, err
 	}
 
-	enforcer, err = casbin.NewEnforcer("casbin/casbin_model.conf", adapter)
+	enforcer, err := casbin.NewEnforcer("casbin/casbin_model.conf", adapter)
 	if err != nil {
-		log.Fatal("Failed to create Casbin enforcer:", err)
+		return nil, err
 	}
 
-	// Load Casbin policies from DB
 	err = enforcer.LoadPolicy()
 	if err != nil {
-		log.Fatal("Failed to load Casbin policies:", err)
+		return nil, err
 	}
+
+	policies, _ := enforcer.GetPolicy()
+	fmt.Println("Loaded policies:", policies)
+
+	return enforcer, nil
 }
 
-// Signup handler
-func signup(c echo.Context) error {
-	user := new(User)
-	if err := c.Bind(user); err != nil {
-		return err
+// CreateJWT generates a JWT token with user ID and role claims
+func CreateJWT(userID int, role string) (string, error) {
+	// personalChannel := fmt.Sprintf("personal:user#%d", userID)
+	claims := jwt.MapClaims{
+		// "sub":  fmt.Sprintf("%s:%d", role, userID),
+		"sub":  strconv.Itoa(userID),
+		"role": role,
+		"exp":  time.Now().Add(time.Hour * 72).Unix(),
+
+		// "channels": []string{personalChannel},
 	}
 
-	// Hash password
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecret)
+}
+
+// Signup handler to register a new user
+func SignupHandler(c echo.Context) error {
+	user := new(User)
+
+	if err := c.Bind(user); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid request payload"})
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return err
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Error hashing password"})
 	}
 
-	// Insert user into database
 	_, err = db.Exec("INSERT INTO users (username, password) VALUES ($1, $2)", user.Username, string(hashedPassword))
+	fmt.Println(err)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Error creating user"})
 	}
 
-	return c.JSON(http.StatusCreated, map[string]string{"message": "User created successfully"})
+	return c.JSON(http.StatusOK, echo.Map{"message": "User registered successfully!"})
 }
 
-// Signin handler
-func signin(c echo.Context) error {
-	user := new(User)
-	if err := c.Bind(user); err != nil {
-		return err
+// Login handler to authenticate user and generate JWT token
+func LoginHandler(c echo.Context) error {
+	loginRequest := new(User)
+
+	if err := c.Bind(loginRequest); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid request payload"})
 	}
 
-	// Fetch user from DB
-	var storedPassword string
-	var userID int
-	err := db.QueryRow("SELECT id, password FROM users WHERE username=$1", user.Username).Scan(
-		&userID,
-		&storedPassword)
+	var user User
+	err := db.QueryRow("SELECT id, password, role FROM users WHERE username = $1", loginRequest.Username).Scan(&user.ID, &user.Password, &user.Role)
 	if err != nil {
-		return echo.ErrUnauthorized
+		return c.JSON(http.StatusUnauthorized, echo.Map{"error": "Invalid username or password"})
 	}
 
-	// Compare password
-	err = bcrypt.CompareHashAndPassword([]byte(storedPassword), []byte(user.Password))
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginRequest.Password))
 	if err != nil {
-		return echo.ErrUnauthorized
+		return c.JSON(http.StatusUnauthorized, echo.Map{"error": "Invalid username or password"})
 	}
 
-	// Create JWT
-	// claims := &JwtCustomClaims{
-	// 	Username: user.Username,
-	// 	RegisteredClaims: jwt.RegisteredClaims{
-	// 		Subject:   strconv.Itoa(userID),
-	// 		IssuedAt:  jwt.NewNumericDate(time.Now()),
-	// 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-	// 	},
-	// }
-	claims := jwt.MapClaims{
-		"sub":      strconv.Itoa(userID),             // Subject (user ID)
-		"exp":      time.Now().Add(time.Hour).Unix(), // Expiration time (1 hour from now)
-		"iat":      time.Now().Unix(),                // Issued at time
-		"username": user.Username,
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	t, err := token.SignedString(jwtSecret)
+	token, err := CreateJWT(user.ID, user.Role)
 	if err != nil {
-		return err
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Error generating token"})
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"token": t})
+	return c.JSON(http.StatusOK, echo.Map{"token": token})
 }
 
-// Define the struct for the request body
-type RequestBody struct {
-	Client  string `json:"client"`
-	Channel string `json:"channel"`
-}
+// Subscription handler for Centrifugo to authorize subscriptions
+func SubscriptionHandler(c echo.Context) error {
+	// Retrieve all headers from the request
+	headers := c.Request().Header
 
-// Subscription proxy for Centrifugo
-func subscriptionProxy(c echo.Context) error {
-	authHeader := c.Request().Header.Get("Authorization")
-	// fmt.Println("Auth Header:: ", c.Request().Body)
+	// Iterate over the headers and print them
+	for key, values := range headers {
+		// Header can have multiple values, so iterate over them
+		for _, value := range values {
+			fmt.Printf("%s: %s\n", key, value)
+		}
+	}
+
+	// authHeader := c.Request().Header.Get("Authorization")
+	// fmt.Println("Req Body:: ", c.Request().Body)
+	// fmt.Println("Auth Header:: ", authHeader)
 	// Initialize the struct
-	var body RequestBody
+	var body SubscriptionRequest
 
 	// Bind the request body to the struct
 	if err := c.Bind(&body); err != nil {
@@ -161,46 +158,77 @@ func subscriptionProxy(c echo.Context) error {
 
 	// Print the request body struct
 	fmt.Printf("Received body: %+v\n", body)
-	if authHeader == "" || len(authHeader) < 7 {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Missing or invalid Authorization header")
-	}
-	tokenStr := authHeader[7:]
-
-	// Validate token
-	claims := &JwtCustomClaims{}
-	token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
-	})
-	if err != nil || !token.Valid {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
-	}
+	// userRoleID := body.User
+	// result := strings.Split(userRoleID, ":")
+	// fmt.Println("result: ", result)
+	// role := result[0]
 
 	// Casbin check
 	// user := claims.Username
-	channel := c.QueryParam("channel")
+	// channel := c.QueryParam("channel")
 	// action := c.QueryParam("action")
+	// fmt.Println("role, channel", role, channel)
+	// fmt.Println("input:: ", result[1], body.Channel, "subscribe")
+	// Fetch all roles for the user
+	err := enforcer.LoadPolicy()
+	if err != nil {
+		log.Fatalf("Failed to load policies: %v", err)
+	}
 
-	// ok, err := enforcer.Enforce(user, channel, action)
-	// if err != nil || !ok {
-	// 	return echo.NewHTTPError(http.StatusForbidden, "Access denied")
-	// }
+	roles, err := enforcer.GetRolesForUser("1")
+	if err != nil {
+		log.Fatalf("Failed to get roles for user: %v", err)
+	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"result": map[string]interface{}{"channels": []string{channel}}})
+	fmt.Printf("Roles for user %s: %v\n", body.User, roles)
+	ok, err := enforcer.Enforce(body.User, body.Channel, "subscribe")
+	fmt.Println("ok, err::>>", ok, err)
+	if err != nil || !ok {
+		// Return permission denied response
+		return c.JSON(http.StatusOK, echo.Map{
+			"error": echo.Map{
+				"code":    http.StatusForbidden,
+				"message": "permission denied",
+			},
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{"result": map[string]interface{}{}})
 }
 
 func main() {
-	// Initialize database and Casbin
-	initDB()
-	initCasbin()
+	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
+		"password=%s dbname=%s sslmode=disable",
+		"db", 5432, "auth_user", "password", "auth_service")
+	// Connect to PostgreSQL
+	var err error
+	db, err = sql.Open("postgres", psqlInfo)
+	if err != nil {
+		fmt.Println("Failed to connect to PostgreSQL:", err)
+		return
+	}
+	defer db.Close()
 
+	// Initialize Casbin enforcer
+	enforcer, err = InitEnforcer(db)
+	if err != nil {
+		fmt.Println("Failed to initialize Casbin enforcer:", err)
+		return
+	}
+
+	// Create Echo instance
 	e := echo.New()
+
+	// Middleware
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
-	// Routes
-	e.POST("/signup", signup)
-	e.POST("/signin", signin)
-	e.POST("/subscribe", subscriptionProxy)
+	// Routes for signup, login, and subscription proxy
+	e.POST("/signup", SignupHandler)
+	e.POST("/signin", LoginHandler)
+	e.POST("/centrifugo/subscribe", SubscriptionHandler)
 
+	// Start the server
 	e.Logger.Fatal(e.Start(":9080"))
+	fmt.Println("No")
 }

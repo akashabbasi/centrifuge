@@ -6,10 +6,11 @@ import WebSocket from "ws"; // WebSocket polyfill for Node.js
 global.WebSocket = WebSocket;
 
 const jwtToken =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MjkwNjgxMTIsImlhdCI6MTcyOTA2NDUxMiwic3ViIjoiMSIsInVzZXJuYW1lIjoiam9obiJ9.PoeWKPdRy__qj8TQksC6fp70Y8212BY-p4rBPBgcBmc"; // JWT token received from your auth service
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MzA2MzMzOTAsInJvbGUiOiJ1c2VyIiwic3ViIjoiMiJ9.3b16YaxJNGav4V5YnFA8L8Uy1h6-xszrtW1rGg5qhiw"
 const centrifuge = new Centrifuge("ws://localhost:8001/connection/websocket", {
   token: jwtToken,
   websocket: WebSocket,
+  
 });
 
 // Create an Express app and listen on port 3000
@@ -28,12 +29,16 @@ app.listen(3000, () => {
     console.log("connecting", ctx);
   });
 
+  centrifuge.on("publication", (ctx) => {
+    console.log("server side subscription publication: ", ctx)
+  })
+
   // Handle successful connection
   centrifuge.on("connected", (ctx) => {
     console.log("Connected to Centrifugo:", ctx);
 
     // Subscribe to a channel (e.g., "chat_room_1")
-    const subscription = centrifuge.newSubscription("chat_room_1");
+    const subscription = centrifuge.newSubscription("markets:btcusdt");
 
     // Handle messages from the channel
     subscription.on("publication", (ctx) => {
